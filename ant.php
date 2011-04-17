@@ -3,8 +3,6 @@
  * Ant
  * Copyright (C) 2011 Jack Polgar
  *
- * This file is part of Ant.
- * 
  * Ant is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation; version 3 only.
@@ -26,6 +24,7 @@ class Ant
 	private static $app_path;
 	private static $routes;
 	private static $app;
+	private static $version = '1.0';
 	
 	public static function init( array $config )
 	{
@@ -60,10 +59,16 @@ class Ant
 		self::$app->$route['method']();
 	}
 	
+	public static function version()
+	{
+		return self::$version;
+	}
+	
 	private static function halt( $message )
 	{
 		echo "Ant Halted during initialization";
 		echo "<p>{$message}</p>";
+		echo "Ant ".self::version();
 		exit;
 	}
 	
@@ -111,15 +116,15 @@ class Ant
 		// Check for a namespace
 		if(count($request) == 3)
 		{
-			$route_info['namespace'] = $request[0];
-			$route_info['controller'] = $request[1];
-			$route_info['method'] = $request[2];
+			$route_info['namespace'] = @$request[0];
+			$route_info['controller'] = @$request[1];
+			$route_info['method'] = @$request[2];
 		}
 		// No namespace
 		else
 		{
-			$route_info['controller'] = $request[0];
-			$route_info['method'] = $request[1];
+			$route_info['controller'] = @$request[0];
+			$route_info['method'] = @$request[1];
 		}
 		
 		return $route_info;
