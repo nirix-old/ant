@@ -36,10 +36,10 @@ class Ant
 		self::run(self::route(self::request()));
 	}
 	
-	private static function run(array $route )
+	private static function run( array $route )
 	{
 		// Check if the controller exists
-		if (!file_exists(self::$app_path.'controllers/' . ($route['namespace'] ? $route['namespace'].'/' : '') . strtolower($route['controller']) . '_controller.php'))
+		if(!file_exists(self::$app_path.'controllers/' . ($route['namespace'] ? $route['namespace'].'/' : '') . strtolower($route['controller']) . '_controller.php'))
 			self::halt("Unable to load controller: ". ($route['namespace'] ? $route['namespace'].'/' : '') . $route['controller']);
 		
 		// Fetch the controller file
