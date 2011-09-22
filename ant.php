@@ -21,137 +21,200 @@
  
 class Ant
 {
-	private static $app_path;
+	private static $controller_path;
 	private static $routes;
+	private static $version = '2.0';
+	private static $request;
+	private static $route_info;
 	private static $app;
-	private static $version = '1.0';
 	
-	public static function init( array $config )
+	/**
+	 * Builds the routes then processes the request to the controller and method.
+	 * @param array $config The config array with the controller path and routes.
+	 */
+	public static function init(array $config)
 	{
-		// Set the config
-		self::$app_path = $config['app_path'];
-		self::$routes = $config['routes'];
+		static::$controller_path = $config['controller_path'];
 		
-		// Route the request and run
-		self::run(self::route(self::request()));
+		foreach ($config['routes'] as $route => $args) {
+			if (!is_array($args)) {
+				$args = array(
+					$args,
+					'params' => array()
+				);
+			}
+			static::$routes[$route] = $args;
+		}
+		
+		static::$request = static::get_request();
+		static::route();
 	}
 	
-	private static function run( array $route )
+	/**
+	 * Loads and executes the controller.
+	 */
+	public static function run()
 	{
-		// Check if the controller exists
-		if(!file_exists(self::$app_path.'controllers/' . ($route['namespace'] ? $route['namespace'].'/' : '') . strtolower($route['controller']) . '_controller.php'))
-			self::halt("Unable to load controller: ". ($route['namespace'] ? $route['namespace'].'/' : '') . $route['controller']);
+		$controller_info = array(
+			'file' => static::$controller_path . (isset(static::$route_info['namespace']) ? static::$route_info['namespace'] . '/' : '') . strtolower(static::$route_info['controller']) . '_controller.php',
+			'class' => static::$route_info['controller'] . 'Controller',
+			'method' => 'action_' . static::$route_info['method']
+		);
 		
-		// Fetch the controller file
-		require_once self::$app_path.'controllers/' . ($route['namespace'] ? $route['namespace'].'/' : '') . strtolower($route['controller']) . '_controller.php';
+		// Fetch the AppController
+		if (file_exists(static::$controller_path . 'app_controller.php')) {
+			require_once static::$controller_path . 'app_controller.php';
+		}
 		
-		// Check if the class exists
-		if(!class_exists($route['controller'] . 'Controller'))
-			self::halt('Unable to initialize controller '. ($route['namespace'] ? $route['namespace'].'/' : '') . $route['controller']);
-			
-		// Check if the method exists
-		if(!method_exists($route['controller'] . 'Controller', $route['method']))
-			self::halt('Unable to call controller method');
+		// Check if the controller file exists
+		if (file_exists($controller_info['file'])) {
+			require_once $controller_info['file'];
+		} else {
+			self::halt("Unable to load controller <code>" . static::$route_info['controller'] . "</code>");
+		}
 		
-		// Start the app
-		$controller = $route['controller'] . 'Controller';
-		self::$app = new $controller;
-		self::$app->$route['method']();
+		// Check if the class and method exists
+		if (class_exists($controller_info['class']) and method_exists($controller_info['class'], $controller_info['method'])) {
+			static::$app = new $controller_info['class']();
+			call_user_func_array(array(static::$app, $controller_info['method']), static::$route_info['args']);
+		} else {
+			self::halt("Unable to call method <code>" . $controller_info['class'] . '::' . $controller_info['method'] . "</code>");
+		}
+		
+		unset($controller_info);
 	}
 	
-	public static function version()
+	/**
+	 * Returns the URL paramater.
+	 * @param string/integer $param The param to fetch.
+	 */
+	public static function param($param)
 	{
-		return self::$version;
+		return static::$route_info['params'][$param];
 	}
 	
-	private static function halt( $message )
+	/**
+	 * Private function to set the routed controller, method, parameters and method arguments.
+	 * @param array $route The route array.
+	 */
+	private static function set_request($route)
 	{
-		echo "Ant Halted during initialization";
-		echo "<p>{$message}</p>";
-		echo "Ant ".self::version();
-		exit;
-	}
-	
-	private static function route( $request )
-	{
-		// Only one route? No need to continue...
-		if(count(self::$routes) == 1) return self::set_controller($request);
+		static::$route_info = array();
 		
-		// Check for RegEx matches
-		foreach(self::$routes as $key => $val)
-		{
-			// Convert wild-cards to regular expression
-			$key = str_replace(':any', '.+', str_replace(':num', '[0-9]+', $key));
-
-			// Is there a RegEx match?
-			if(preg_match('#^'.$key.'$#', $request))
-			{
-				// Do we have a back-reference?
-				if(strpos($val, '$') !== FALSE AND strpos($key, '(') !== FALSE)
-				{
-					$val = preg_replace('#^'.$key.'$#', $val, $request);
-				}
-
-				return self::set_controller($val);
+		// Seperate the method arguments from the route
+		$bits = explode('/', $route[0]);
+		static::$route_info['params'] = $route['params'];
+		static::$route_info['args'] = array_slice($bits, 1);
+		
+		// Check if there's a namespace specified
+		$bits = explode('::', $bits[0]);
+		if (count($bits) == 3) {
+			static::$route_info['namespace'] = $bits[0];
+			static::$route_info['controller'] = $bits[1];
+			static::$route_info['method'] = $bits[2];
+		} else {
+			static::$route_info['controller'] = $bits[0];
+			static::$route_info['method'] = $bits[1];
+		}
+	}
+	
+	/**
+	 * Private function used to route the reuqest to the controller
+	 */
+	private static function route()
+	{
+		// Prefix a forward slash to the request.
+		$request = '/' . static::$request;
+		
+		// Are we on the front page?
+		if ($request == '/') {
+			static::set_request(static::$routes['/']);
+			return true;
+		}
+		
+		// Check if we have an exact match
+		if (isset(static::$routes[$request])) {
+			static::set_request(static::$routes[$request]);
+			return true;
+		}
+		
+		// Loop through routes and find a regex match
+		foreach (static::$routes as $route => $args) {
+			$route = '#^' . $route . '$#';
+			if (preg_match($route, $request, $params)) {
+				unset($params[0]);
+				$args['params'] = array_merge($args['params'], $params);
+				$args[0] = preg_replace($route, $args[0], $request);
+				static::set_request($args);
+				return true;
 			}
 		}
 		
-		// No matches? eh
-		return self::set_controller($request);
+		// No match, error controller, make it so.
+		static::set_request(array('Error::404', 'params' => array()));
+		return false;
 	}
 	
-	private static function set_controller( $request )
-	{	
-		$request = explode('/', $request);
-		
-		// Check if the request exists
-		if($request[0] == '') $request = explode('/', self::$routes['/']);
-		
-		$route_info = array(
-			'namespace' => null,
-			'controller' => null,
-			'method' => null
-		);
-		
-		// Check for a namespace
-		if(count($request) == 3)
-		{
-			$route_info['namespace'] = @$request[0];
-			$route_info['controller'] = @$request[1];
-			$route_info['method'] = @$request[2];
-		}
-		// No namespace
-		else
-		{
-			$route_info['controller'] = @$request[0];
-			$route_info['method'] = @$request[1];
-		}
-		
-		return $route_info;
-	}
-	
-	public static function request()
+	/**
+	 * Private function used to get the request URI.
+	 */
+	private static function get_request()
 	{
 		// Check if there is a PATH_INFO variable
 		// Note: some servers seem to have trouble with getenv()
 		$path = isset($_SERVER['PATH_INFO']) ? $_SERVER['PATH_INFO'] : @getenv('PATH_INFO');
-		if(trim($path, '/') != '' && $path != "/index.php") return trim($path, '/');
-
+		if (trim($path, '/') != '' && $path != "/index.php") {
+			return $path;
+		}
+		
 		// Check if ORIG_PATH_INFO exists
 		$path = str_replace($_SERVER['SCRIPT_NAME'], '', (isset($_SERVER['ORIG_PATH_INFO'])) ? $_SERVER['ORIG_PATH_INFO'] : @getenv('ORIG_PATH_INFO'));
-		if(trim($path, '/') != '' && $path != "/index.php") return trim($path, '/');
-
+		if (trim($path, '/') != '' && $path != "/index.php") {
+			return $path;
+		}
+		
 		// Check for ?uri=x/y/z
-		if(isset($_REQUEST['url']) ) return $_REQUEST['url'];
-
+		if (isset($_REQUEST['url'])) {
+			return $_REQUEST['url'];
+		}
+		
 		// Check the _GET variable
-		if(is_array($_GET) && count($_GET) == 1 && trim(key($_GET), '/') != '') return key($_GET);
-
+		if (is_array($_GET) && count($_GET) == 1 && trim(key($_GET), '/') != '') {
+			return key($_GET);
+		}
+		
 		// Check for QUERY_STRING
 		$path = (isset($_SERVER['QUERY_STRING'])) ? $_SERVER['QUERY_STRING'] : @getenv('QUERY_STRING');
-		if(trim($path, '/') != '') return trim($path, '/');
-
+		if (trim($path, '/') != '') {
+			return $path;
+		}
+		
+		// Check for REQUEST_URI
+		$path = str_replace($_SERVER['SCRIPT_NAME'], '', $_SERVER['REQUEST_URI']);
+		if (trim($path, '/') != '' && $path != "/index.php") {
+			return str_replace(str_replace(basename($_SERVER['SCRIPT_NAME']), '', $_SERVER['SCRIPT_NAME']), '', $path);
+		}
+		
 		// I dont know what else to try, screw it..
 		return '';
+	}
+	
+	/**
+	 * Private function used to display an error message.
+	 */
+	private static function halt($message)
+	{
+		echo "Ant halted with error:<br />";
+		echo "<p>{$message}</p>";
+		echo "<small>Ant " . self::version() . "</small>";
+		exit;
+	}
+	
+	/**
+	 * Returns the version number.
+	 */
+	public static function version()
+	{
+		return self::$version;
 	}
 }
